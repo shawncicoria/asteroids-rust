@@ -1,0 +1,16 @@
+[package]
+name = "asteroids-rust"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "asteroids"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+rand = "0.8"
+
+[profile.release]
+opt-level = 3
