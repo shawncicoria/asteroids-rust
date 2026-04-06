@@ -25,7 +25,8 @@ use serde::{Deserialize, Serialize};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
+    text::{Line as TLine, Span},
     widgets::{
         canvas::{Canvas, Line as CLine, Points},
         Block, Borders, Paragraph,
@@ -602,23 +603,87 @@ fn load_trace(path: &PathBuf) -> io::Result<Trace> {
 fn draw(f: &mut Frame, g: &Game) {
     let area = f.area();
 
-    // 1-line header + canvas fills the rest
+    // 2-line header + canvas fills the rest
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
         .split(area);
     let (hdr_area, canvas_area) = (chunks[0], chunks[1]);
 
     // ── header bar ──────────────────────────────────────────────
-    let lives_str: String = "♦ ".repeat(g.lives as usize);
-    let hdr = format!(
-        " SCORE {:06}   HI {:06}   {}  LEVEL {}",
-        g.score, g.hi, lives_str, g.level
-    );
+    //
+    // Line 1: score / hi-score / level
+    // Line 2: lives (♥ per life) + ammo (● ready · cooling ○ in-flight)
+    //
+    // Ammo legend:
+    //   ● white  – slot ready to fire
+    //   · yellow – slot cooling down (just fired; can fire next)
+    //   ○ dark   – bullet currently in flight
+
+    let dim   = Style::default().fg(Color::DarkGray);
+    let white = Style::default().fg(Color::White);
+    let bold  = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let green = Style::default().fg(Color::Green);
+    let cyan  = Style::default().fg(Color::Cyan);
+    let yell  = Style::default().fg(Color::Yellow);
+    let red   = Style::default().fg(Color::Red);
+
+    // ── line 1: score ──
+    let line1 = TLine::from(vec![
+        Span::styled(" SCORE ", dim),
+        Span::styled(format!("{:06}", g.score), bold),
+        Span::styled("   HI ", dim),
+        Span::styled(format!("{:06}", g.hi), white),
+        Span::styled(format!("   LEVEL {}", g.level), cyan),
+    ]);
+
+    // ── line 2: lives + ammo ──
+    let in_flight = g.bullets.len();
+    let cooling   = g.cooldown > 0;
+
+    // Build lives spans: filled heart per life, dim dash for lost lives.
+    let mut life_spans: Vec<Span> = vec![Span::styled(" LIVES ", dim)];
+    let max_lives = 5usize; // display up to 5 slots so losses are visible
+    for i in 0..max_lives {
+        if i < g.lives as usize {
+            life_spans.push(Span::styled("♥ ", green));
+        } else {
+            life_spans.push(Span::styled("· ", dim));
+        }
+    }
+
+    // Build ammo spans: 4 slots, left = oldest bullet in flight.
+    let mut ammo_spans: Vec<Span> = vec![Span::styled("   AMMO ", dim)];
+    for i in 0..MAX_BULLETS {
+        let sym = if i < in_flight {
+            // bullet is in the air
+            Span::styled("○ ", dim)
+        } else if cooling && i == in_flight {
+            // next slot is cooling down (post-fire delay)
+            Span::styled("· ", yell)
+        } else {
+            // slot is ready
+            Span::styled("● ", white)
+        };
+        ammo_spans.push(sym);
+    }
+
+    // Fire-state hint at the end of the ammo row.
+    let fire_hint = if in_flight >= MAX_BULLETS {
+        Span::styled(" WAIT", red)
+    } else if cooling {
+        Span::styled(" RELOAD", yell)
+    } else {
+        Span::styled(" READY", green)
+    };
+    ammo_spans.push(fire_hint);
+
+    let mut line2_spans = life_spans;
+    line2_spans.extend(ammo_spans);
+    let line2 = TLine::from(line2_spans);
+
     f.render_widget(
-        Paragraph::new(hdr)
-            .style(Style::default().fg(Color::White))
-            .alignment(Alignment::Left),
+        Paragraph::new(vec![line1, line2]).alignment(Alignment::Left),
         hdr_area,
     );
 
